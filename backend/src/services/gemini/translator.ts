@@ -1,3 +1,4 @@
+import { ApiError } from '@google/genai';
 import { env } from '../../config/env';
 import type { Lang } from '../../../../shared/events';
 import { ai } from './client';
@@ -11,7 +12,25 @@ export interface TranslateRequest {
   context?: string[]; // previous sentences, for coherence only
 }
 
-export async function translate({ text, from, to, glossary, context = [] }: TranslateRequest) {
+const MAX_RETRIES = 3;
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+export async function translate(req: TranslateRequest) {
+  for (let attempt = 0; ; attempt++) {
+    try {
+      return await translateOnce(req);
+    } catch (err) {
+      // 429 = rate limit: back off and retry. Any other error propagates as before.
+      if (!(err instanceof ApiError) || err.status !== 429 || attempt >= MAX_RETRIES) throw err;
+      await sleep(500 * 2 ** attempt);
+    }
+  }
+}
+
+async function translateOnce({ text, from, to, glossary, context = [] }: TranslateRequest) {
   const systemInstruction = [
     `You are a professional simultaneous interpreter at a software conference.`,
     `Translate the user's text from ${LANG_NAMES[from]} to ${LANG_NAMES[to]}.`,
