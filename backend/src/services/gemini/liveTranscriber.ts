@@ -116,11 +116,13 @@ export class LiveTranscriber extends EventEmitter<Events> {
   }
 
   private buildConfig() {
-    const isNativeAudio = env.GEMINI_LIVE_MODEL.includes('native-audio');
     const glossary = this.opts.glossary?.trim();
 
     return {
-      responseModalities: [isNativeAudio ? Modality.AUDIO : Modality.TEXT],
+      // gemini-3.8-live and its predecessors only accept AUDIO as a response
+      // modality; we never use the audio itself since the model is instructed
+      // to stay silent — inputAudioTranscription below is what we actually read.
+      responseModalities: [Modality.AUDIO],
       inputAudioTranscription: {},
       systemInstruction: [
         `You are a passive listener at a tech conference talk in ${LANG_NAMES[this.opts.sourceLang]}.`,
@@ -138,6 +140,8 @@ export class LiveTranscriber extends EventEmitter<Events> {
   }
 
   private onMessage(msg: LiveServerMessage) {
+    if (process.env.DEBUG_LIVE) console.log(`[debug ${this.opts.label}]`, JSON.stringify(msg).slice(0, 400));
+
     if (msg.sessionResumptionUpdate?.resumable && msg.sessionResumptionUpdate.newHandle) {
       this.resumeHandle = msg.sessionResumptionUpdate.newHandle;
     }

@@ -5,16 +5,18 @@ dotenv.config();
 
 const bool = z
   .enum(['true', 'false'])
-  .default('true')
+  .default('false')
   .transform((v) => v === 'true');
 
 const schema = z.object({
   NODE_ENV: z.enum(['development', 'production', 'test']).default('development'),
   PORT: z.coerce.number().int().positive().default(5000),
   GEMINI_API_KEY: z.string().min(1, 'GEMINI_API_KEY is required (see backend/.env.example)'),
-  GEMINI_LIVE_MODEL: z.string().default('gemini-live-2.5-flash-preview'),
-  GEMINI_TRANSLATE_MODEL: z.string().default('gemini-2.5-flash-lite'),
-  // Keep the Live session in a single never-ending turn so the model transcribes but never answers.
+  GEMINI_LIVE_MODEL: z.string().default('gemini-3.8-live'),
+  GEMINI_TRANSLATE_MODEL: z.string().default('gemini-3.5-flash-lite'),
+  // false (default): let Gemini's server-side VAD detect speech turns, so inputTranscription
+  // actually flushes as the talk goes on. Manual mode (true) only flushes transcription on
+  // activityEnd, which this app never sends — kept as an option, not the default.
   GEMINI_LIVE_MANUAL_ACTIVITY: bool,
   FRONTEND_URL: z.string().default('http://localhost:3000'),
   // Shared secret operators must send to stream audio. Empty = open (local dev only).

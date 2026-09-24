@@ -32,7 +32,6 @@ export async function translate({ text, from, to, glossary, context = [] }: Tran
       systemInstruction,
       temperature: 0.2,
       maxOutputTokens: 512,
-      thinkingConfig: { thinkingBudget: 0 },
     },
   });
 
