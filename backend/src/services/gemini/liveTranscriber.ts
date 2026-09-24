@@ -9,6 +9,10 @@ const MIME_TYPE = `audio/pcm;rate=${AUDIO.sampleRate}`;
 const MAX_PENDING_CHUNKS = 100; // ~10 s of audio buffered while reconnecting
 const MAX_BACKOFF_MS = 10_000;
 const CONNECT_TIMEOUT_MS = 10_000;
+// If resuming keeps failing, the handle itself is probably stale/rejected by
+// the server: drop it and fall back to a fresh session rather than retrying
+// forever with a handle that will never be accepted.
+const MAX_RESUME_RETRIES = 3;
 
 function withTimeout<T>(promise: Promise<T>, ms: number, onTimeout: () => void) {
   return new Promise<T>((resolve, reject) => {
@@ -172,6 +176,11 @@ export class LiveTranscriber extends EventEmitter<Events> {
     if (this.stopped) return;
     const delay = Math.min(500 * 2 ** this.retries, MAX_BACKOFF_MS);
     this.retries++;
+    if (this.resumeHandle && this.retries >= MAX_RESUME_RETRIES) {
+      // Repeated failures with the same handle mean the server isn't going to
+      // accept it — start clean next time instead of looping on a dead handle.
+      this.resumeHandle = undefined;
+    }
     this.emit('status', 'reconnecting');
     clearTimeout(this.reconnectTimer);
     this.reconnectTimer = setTimeout(() => void this.connect(), delay);

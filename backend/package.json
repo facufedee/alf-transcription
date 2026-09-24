@@ -9,7 +9,7 @@
     "start": "node dist/backend/src/index.js",
     "type-check": "tsc --noEmit",
     "simulate": "tsx scripts/simulate.ts",
-    "test": "tsx --test src/services/pipeline/segmenter.test.ts"
+    "test": "tsx --test src/services/pipeline/segmenter.test.ts src/services/gemini/liveTranscriber.test.ts"
   },
   "keywords": [
     "transcription",
