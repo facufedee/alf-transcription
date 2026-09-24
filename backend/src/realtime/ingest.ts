@@ -1,4 +1,5 @@
-import type { Namespace } from 'socket.io';
+import type { Namespace, Socket } from 'socket.io';
+import { jwtVerify } from 'jose';
 import { z } from 'zod';
 import { env } from '../config/env';
 import { AUDIO, EVENTS, LANGS } from '../../../shared/events';
@@ -12,11 +13,30 @@ const startSchema = z.object({
 type Ack = (res: { ok: true } | { ok: false; error: string }) => void;
 const noop: Ack = () => {};
 
-// Operators stream one stage per socket. Phase 4 replaces the shared token with a JWT.
+// Operators stream one stage per socket, authenticated by the JWT the frontend
+// mints (GET /api/auth/token) for an operator who already passed Google login.
+// Falls back to the flat INGEST_TOKEN when AUTH_SECRET isn't set — dev-only,
+// same as before Phase 4.
+export async function authenticate(socket: Socket) {
+  const token = socket.handshake.auth?.token;
+
+  if (!env.AUTH_SECRET) {
+    if (!env.INGEST_TOKEN || token === env.INGEST_TOKEN) return;
+    throw new Error('unauthorized');
+  }
+
+  if (typeof token !== 'string') throw new Error('unauthorized');
+  const { payload } = await jwtVerify(token, new TextEncoder().encode(env.AUTH_SECRET));
+  if (payload.role !== 'operator' || typeof payload.email !== 'string') throw new Error('unauthorized');
+  socket.data.operatorEmail = payload.email;
+}
+
 export function registerIngest(nsp: Namespace, stages: StageManager) {
   nsp.use((socket, next) => {
-    if (!env.INGEST_TOKEN || socket.handshake.auth?.token === env.INGEST_TOKEN) return next();
-    next(new Error('unauthorized'));
+    authenticate(socket).then(
+      () => next(),
+      () => next(new Error('unauthorized')),
+    );
   });
 
   nsp.on('connection', (socket) => {
