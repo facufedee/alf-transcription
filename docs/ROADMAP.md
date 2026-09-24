@@ -133,15 +133,20 @@ alf-transcription/
 - [x] `index.ts` partido en `config/`, `http/`, `realtime/` (namespace `/watch` ya valida y une a rooms)
 - [x] Dockerfiles con contexto = raíz del repo (para incluir `shared/`), node 20, usuario no root, `output: standalone`
 
-### Fase 1 — Pipeline núcleo (lo que gana o pierde la hackathon) · ~4 h
-- [ ] `liveTranscriber`: abre sesión Gemini Live, recibe PCM, emite parciales y finales, reconecta sola
-- [ ] `translator`: frase final → traducción (EN→ES obligatorio, ES→EN extra), con cola para no saturar la API
-- [ ] Glosario por escenario (texto libre) inyectado en el system prompt de transcripción y traducción
-- [ ] `stageManager`: crea/destruye un pipeline por escenario; N en paralelo
-- [ ] Namespace `/ingest` recibe audio; `/watch` emite captions por room
-- [ ] **Fuente "archivo"**: `samples/` con 2–3 audios de charlas de Nerdearla (EN y ES) + el backend puede
-      reproducir un archivo como si fuera un escenario en vivo, a velocidad real (requisito del MVP)
-- [ ] **Prueba de escala:** 5 escenarios simultáneos desde `samples/`; medir latencia y costo por hora → al README
+### Fase 1 — Pipeline núcleo (lo que gana o pierde la hackathon) · 🟡 código listo, falta probar con Gemini
+- [x] `liveTranscriber`: sesión Gemini Live por escenario, solo transcribe (turno manual abierto), reanuda con handle
+      en `goAway`/cierre, backoff, buffer de ~10 s mientras reconecta, timeout de conexión (el SDK se cuelga si Google corta en el handshake)
+- [x] `segmenter`: fragmentos → parciales + una final por frase (puntuación, silencio 1.2 s o 180 caracteres). Tests: `npm test`
+- [x] `translator`: frase final → traducción con Flash-Lite (sin thinking), con glosario y 2 frases de contexto; cola por escenario que respeta el orden
+- [x] Glosario por escenario inyectado en transcripción y traducción
+- [x] `stageManager`: N escenarios aislados, historial de finales por idioma (para late joiners y export)
+- [x] `/ingest` (token `INGEST_TOKEN`, ack en start/stop, valida tamaño de chunks) y `/watch` (manda historial al suscribirse)
+- [x] `samples/`: 2 audios TTS (EN Kubernetes, ES Postgres) + `npm run simulate -- sala-1:en:../samples/x.wav ...`
+- [x] Circuito probado sin Gemini: 2 escenarios en paralelo, start/stop limpio, sin reconexiones colgadas
+- [ ] **Probar con Gemini real** (bloqueado: la key tiene restricción de API) y elegir el modelo Live disponible
+- [ ] Validar que `GEMINI_LIVE_MANUAL_ACTIVITY=true` devuelve transcripción sin que el modelo responda
+- [ ] Sumar 2 charlas reales de Nerdearla a `samples/`
+- [ ] **Prueba de escala:** 5 escenarios en paralelo; anotar latencia y costo por hora → README
 
 ### Fase 2 — Vista de audiencia + overlay · ~2 h
 - [ ] `/watch`: lista de escenarios con estado en vivo
