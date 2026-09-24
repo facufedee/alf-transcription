@@ -1,16 +1,16 @@
 'use client';
 
-import { use, useEffect, useState, useRef } from 'react';
+import { useEffect, useState, useRef } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { useStageCaptions } from '@/hooks/useStageCaptions';
 import { Lang } from '@shared/events';
 
 interface PageProps {
-  params: Promise<{ id: string }>;
+  params: { id: string };
 }
 
 export default function OverlayPage({ params }: PageProps) {
-  const { id: stageId } = use(params);
+  const { id: stageId } = params;
   const searchParams = useSearchParams();
 
   // Overlay defaults to 'en' (ideal for OBS recording and English judges), or ?lang=es

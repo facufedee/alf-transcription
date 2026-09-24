@@ -1,13 +1,13 @@
 'use client';
 
-import { use, useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useStageCaptions } from '@/hooks/useStageCaptions';
 import { Lang } from '@shared/events';
 
 interface PageProps {
-  params: Promise<{ id: string }>;
+  params: { id: string };
 }
 
 type FontSize = 'sm' | 'md' | 'lg' | 'xl';
@@ -20,7 +20,7 @@ const FONT_CLASSES: Record<FontSize, string> = {
 };
 
 export default function WatchStagePage({ params }: PageProps) {
-  const { id: stageId } = use(params);
+  const { id: stageId } = params;
   const router = useRouter();
   const searchParams = useSearchParams();
 
