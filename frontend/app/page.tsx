@@ -25,15 +25,24 @@ export default function Home() {
           </p>
           <NerdVibeathon className="mt-3 text-5xl md:text-7xl" />
 
-          <Link
-            href="/login"
-            className="mt-10 inline-flex items-center gap-3 rounded-full bg-[#f3e6dc] py-2 pl-6 pr-2 font-medium text-[#140b07] transition hover:bg-white"
-          >
-            Ingresar
-            <span className="grid h-8 w-8 place-items-center rounded-full bg-[#140b07] text-[#f3e6dc]">
-              →
-            </span>
-          </Link>
+          <div className="mt-10 flex flex-wrap items-center gap-4 justify-center md:justify-start">
+            <Link
+              href="/watch"
+              className="inline-flex items-center gap-3 rounded-full bg-[#f3e6dc] py-2 pl-6 pr-2 font-medium text-[#140b07] transition hover:bg-white"
+            >
+              Ver subtítulos en vivo
+              <span className="grid h-8 w-8 place-items-center rounded-full bg-[#140b07] text-[#f3e6dc]">
+                →
+              </span>
+            </Link>
+
+            <Link
+              href="/login"
+              className="rounded-full border border-[#f3e6dc]/20 px-5 py-2.5 text-xs font-mono uppercase tracking-wider text-[#f3e6dc]/70 transition hover:border-[#f3e6dc]/50 hover:text-white"
+            >
+              Operadores
+            </Link>
+          </div>
         </div>
 
         <div className="relative h-64 w-64 shrink-0 overflow-hidden rounded-full ring-1 ring-[#f3e6dc]/10 md:h-[26rem] md:w-[26rem]">
