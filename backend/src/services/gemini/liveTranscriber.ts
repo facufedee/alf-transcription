@@ -9,6 +9,13 @@ const MIME_TYPE = `audio/pcm;rate=${AUDIO.sampleRate}`;
 const MAX_PENDING_CHUNKS = 100; // ~10 s of audio buffered while reconnecting
 const MAX_BACKOFF_MS = 10_000;
 const CONNECT_TIMEOUT_MS = 10_000;
+// In manual-activity mode, Gemini only flushes inputTranscription when we send
+// activityEnd — and with automatic detection, we've seen it flush once after
+// the first utterance and then never open a new turn again for continuous
+// real speech. So in manual mode we force a flush on a fixed cadence: close
+// and immediately reopen the "activity" every CYCLE_MS. The segmenter already
+// reassembles arbitrary fragments into sentences, so mid-word cuts are fine.
+const CYCLE_MS = 5_000;
 // If resuming keeps failing, the handle itself is probably stale/rejected by
 // the server: drop it and fall back to a fresh session rather than retrying
 // forever with a handle that will never be accepted.
@@ -45,12 +52,16 @@ type Events = {
  */
 export class LiveTranscriber extends EventEmitter<Events> {
   private session?: Session;
+  private setupSeen = false; // true once setupComplete arrived for the current session
+  private setupDone = false; // true once we've reacted to it (session assigned + setupSeen)
   private generation = 0;
   private resumeHandle?: string;
   private pending: string[] = [];
   private retries = 0;
   private stopped = false;
   private reconnectTimer?: NodeJS.Timeout;
+  private cycleTimer?: NodeJS.Timeout;
+  private chunksIn = 0;
 
   constructor(private readonly opts: LiveTranscriberOptions) {
     super();
@@ -63,8 +74,11 @@ export class LiveTranscriber extends EventEmitter<Events> {
 
   push(pcm: Buffer) {
     if (this.stopped) return;
+    if (process.env.DEBUG_LIVE && ++this.chunksIn % 20 === 0) {
+      console.log(`[debug ${this.opts.label}] push #${this.chunksIn}, session=${!!this.session}, setupDone=${this.setupDone}, pending=${this.pending.length}`);
+    }
     const data = pcm.toString('base64');
-    if (!this.session) {
+    if (!this.session || !this.setupDone) {
       this.pending.push(data);
       if (this.pending.length > MAX_PENDING_CHUNKS) this.pending.shift();
       return;
@@ -75,6 +89,7 @@ export class LiveTranscriber extends EventEmitter<Events> {
   stop() {
     this.stopped = true;
     clearTimeout(this.reconnectTimer);
+    clearInterval(this.cycleTimer);
     this.generation++;
     this.session?.close();
     this.session = undefined;
@@ -83,6 +98,8 @@ export class LiveTranscriber extends EventEmitter<Events> {
 
   private async connect() {
     const gen = ++this.generation;
+    this.setupSeen = false;
+    this.setupDone = false;
     if (this.retries === 0 && !this.resumeHandle) this.emit('status', 'connecting');
 
     try {
@@ -107,10 +124,11 @@ export class LiveTranscriber extends EventEmitter<Events> {
 
       this.session = session;
       this.retries = 0;
-      if (env.GEMINI_LIVE_MANUAL_ACTIVITY) session.sendRealtimeInput({ activityStart: {} });
-      for (const data of this.pending.splice(0)) {
-        session.sendRealtimeInput({ audio: { data, mimeType: MIME_TYPE } });
-      }
+      // onmessage can fire (and setupComplete can arrive) before this awaited
+      // connect() call returns — so setupSeen may already be true here. Either
+      // order works: whichever of "session assigned" / "setupSeen" happens
+      // second is the one that actually triggers activate().
+      this.activate();
       this.emit('status', 'live');
     } catch (err) {
       if (gen !== this.generation) return;
@@ -143,8 +161,29 @@ export class LiveTranscriber extends EventEmitter<Events> {
     };
   }
 
+  /** Runs once per session, whenever both a session and its setupComplete are
+   * in hand — regardless of which arrived first. Sends the initial
+   * activityStart, starts the flush cycle, and flushes buffered audio. */
+  private activate() {
+    if (!this.session || !this.setupSeen || this.setupDone) return;
+    this.setupDone = true;
+    if (env.GEMINI_LIVE_MANUAL_ACTIVITY) {
+      this.session.sendRealtimeInput({ activityStart: {} });
+      clearInterval(this.cycleTimer);
+      this.cycleTimer = setInterval(() => this.cycleActivity(), CYCLE_MS);
+    }
+    for (const data of this.pending.splice(0)) {
+      this.session.sendRealtimeInput({ audio: { data, mimeType: MIME_TYPE } });
+    }
+  }
+
   private onMessage(msg: LiveServerMessage) {
     if (process.env.DEBUG_LIVE) console.log(`[debug ${this.opts.label}]`, JSON.stringify(msg).slice(0, 400));
+
+    if (msg.setupComplete) {
+      this.setupSeen = true;
+      this.activate();
+    }
 
     if (msg.sessionResumptionUpdate?.resumable && msg.sessionResumptionUpdate.newHandle) {
       this.resumeHandle = msg.sessionResumptionUpdate.newHandle;
@@ -161,15 +200,32 @@ export class LiveTranscriber extends EventEmitter<Events> {
 
   private onClose(code: number, reason: string) {
     if (this.stopped) return;
+    clearInterval(this.cycleTimer);
     this.session = undefined;
     this.emit('error', new Error(`Live session closed (${code}) ${reason}`.trim()));
     this.scheduleReconnect();
   }
 
   private swapSession() {
+    clearInterval(this.cycleTimer);
     const old = this.session;
     this.session = undefined; // buffer audio until the new session is ready
     void this.connect().finally(() => old?.close());
+  }
+
+  /** Manual-activity mode only: close and immediately reopen the "activity" so
+   * Gemini flushes whatever input transcription it's accumulated so far,
+   * instead of waiting on a turn boundary that may never come. */
+  private cycleActivity() {
+    if (process.env.DEBUG_LIVE) console.log(`[debug ${this.opts.label}] cycleActivity tick, session=${!!this.session}`);
+    if (!this.session) return;
+    this.session.sendRealtimeInput({ activityEnd: {} });
+    const session = this.session;
+    // A short gap between activityEnd and activityStart — sending them back to
+    // back with zero delay intermittently gets the session killed with a 1007.
+    setTimeout(() => {
+      if (this.session === session) session.sendRealtimeInput({ activityStart: {} });
+    }, 100);
   }
 
   private scheduleReconnect() {
