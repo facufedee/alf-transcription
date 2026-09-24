@@ -1,39 +1,52 @@
-import React from 'react';
+import Link from 'next/link';
+import Image from 'next/image';
+import NerdVibeathon from '../components/NerdVibeathon';
 
 export default function Home() {
   return (
-    <main className="min-h-screen bg-gradient-to-br from-purple-600 to-blue-600 flex items-center justify-center">
-      <div className="text-center text-white">
-        <div className="mb-8">
-          <h1 className="text-6xl font-bold mb-2">👽 ALF</h1>
-          <p className="text-xl text-gray-100">
-            Alien Live Feed
+    <main className="relative min-h-screen overflow-hidden bg-[#140b07] text-[#f3e6dc]">
+      {/* Warm glow */}
+      <div
+        aria-hidden
+        className="pointer-events-none absolute inset-0 bg-[radial-gradient(ellipse_at_70%_45%,rgba(196,98,45,0.35),transparent_60%)]"
+      />
+
+      <section className="relative mx-auto flex min-h-screen max-w-6xl flex-col-reverse items-center justify-center gap-12 px-6 py-16 md:flex-row md:justify-between md:gap-16">
+        <div className="max-w-xl text-center md:text-left">
+          <span className="mb-6 inline-block rounded-full border border-[#f3e6dc]/20 px-3 py-1 font-mono text-xs uppercase tracking-[0.2em] text-[#f3e6dc]/70">
+            Vibeathon 2026 · Open source
+          </span>
+
+          <h1 className="text-4xl font-medium leading-tight tracking-tight md:text-6xl">
+            ¿Te acordás de ALF?
+          </h1>
+          <p className="mt-5 text-lg leading-relaxed text-[#f3e6dc]/75 md:text-xl">
+            Volvió en forma de transcriptor open source para la
           </p>
+          <NerdVibeathon className="mt-3 text-5xl md:text-7xl" />
+
+          <Link
+            href="/login"
+            className="mt-10 inline-flex items-center gap-3 rounded-full bg-[#f3e6dc] py-2 pl-6 pr-2 font-medium text-[#140b07] transition hover:bg-white"
+          >
+            Ingresar
+            <span className="grid h-8 w-8 place-items-center rounded-full bg-[#140b07] text-[#f3e6dc]">
+              →
+            </span>
+          </Link>
         </div>
 
-        <p className="text-2xl mb-8 max-w-2xl">
-          Real-time transcription for live conferences
-        </p>
-
-        <p className="text-gray-100 mb-8 max-w-2xl">
-          Simultaneous sessions, instant subtitles (original language + Spanish).
-          <br />
-          Open source, zero cost, built for accessibility at scale.
-        </p>
-
-        <div className="flex gap-4 justify-center">
-          <button className="bg-white text-purple-600 px-8 py-3 rounded-lg font-semibold hover:bg-gray-100 transition">
-            Watch Live
-          </button>
-          <button className="border-2 border-white text-white px-8 py-3 rounded-lg font-semibold hover:bg-white hover:text-purple-600 transition">
-            GitHub
-          </button>
+        <div className="relative h-64 w-64 shrink-0 overflow-hidden rounded-full ring-1 ring-[#f3e6dc]/10 md:h-[26rem] md:w-[26rem]">
+          <Image
+            src="/alf.png"
+            alt="ALF"
+            fill
+            priority
+            sizes="(min-width: 768px) 26rem, 16rem"
+            className="scale-125 object-cover"
+          />
         </div>
-
-        <p className="text-sm text-gray-200 mt-12">
-          🎉 Built for Nerdearla 2026
-        </p>
-      </div>
+      </section>
     </main>
   );
 }
