@@ -1,10 +1,10 @@
-# ALF — Real-Time Conference Transcription & Translation
+# ALF (Audio Live Feed) — Real-Time Conference Transcription & Translation
 
-**¿Te acordás de ALF?** Volvió en forma de transcriptor open source para
-[Nerdearla 2026](https://nerdearla.com) — construido para la **Vibeathon 2026**.
+**¿Te acordás de ALF?** Volvió en forma de **Audio Live Feed (ALF)**, un transcriptor open source para
+[Nerdearla 2026](https://nerdearla.com) — construido para la **Vibeathon 2026** por **[Facundo Flores](https://www.linkedin.com/in/floresfacundo)** (Ingeniero en Sistemas).
 
 ALF toma audio en vivo de **varios escenarios en paralelo**, lo transcribe con
-**Gemini** en el idioma original, lo traduce (EN↔ES) y lo emite como
+**Gemini Live API** en el idioma original, lo traduce (EN↔ES) con **Gemini Flash** y lo emite como
 **subtítulos en tiempo real** a una web donde cada persona elige sesión e idioma.
 Open source (MIT), pensado para que cualquier conferencia lo despliegue.
 
@@ -13,8 +13,9 @@ arquitectura, fases y contra qué nos evalúa el challenge.
 
 ## Qué incluye
 
-- 🎙️ Transcripción con la Live API de Gemini (`gemini-3.8-live`) — llega en tandas
-  cada ~5-10 s, no palabra por palabra (ver **Latencia** abajo)
+- 🎙️ Transcripción con la Live API de Gemini (`gemini-3.5-transcribe-live`,
+  modelo dedicado de transcripción) — primera transcripción en ~1 s gracias a
+  resultados incrementales en vivo (ver **Latencia** abajo)
 - 🌍 Traducción EN↔ES por oración con Gemini (`gemini-3.5-flash-lite`)
 - 🖥️ Múltiples escenarios en paralelo, cada uno con su propia sesión de Gemini
 - 👀 Vista de audiencia (`/watch`) — elegís sesión + idioma
@@ -135,17 +136,27 @@ commitea, no se copia a la imagen — ver `.dockerignore`).
 
 ## Latencia
 
-Medido con audio real (una charla completa de Nerdearla, no un clip de prueba):
-los subtítulos llegan en **tandas de ~5-10 segundos**, no palabra por palabra.
+Medido con `npm run simulate` contra audio real: **primera transcripción a
+~1 segundo**, traducción con **~1 segundo de atraso** sobre la transcripción
+(8/8 oraciones traducidas, sin acumular cola). El modelo dedicado
+`gemini-3.5-transcribe-live` entrega `interimInputTranscription` cada
+~500ms mientras la persona habla; el segmentador (`Segmenter.pushInterim`,
+ver [`segmenter.ts`](backend/src/services/pipeline/segmenter.ts)) corta
+oraciones apenas aparece puntuación en ese texto creciente, en vez de
+esperar a que Gemini cierre un turno.
 
-Por qué: la Live API de Gemini solo entrega `inputTranscription` al cerrar una
-"actividad" (`activityEnd`). Probamos acortar ese ciclo a 2s esperando texto
-más fluido, pero **empeoró** la latencia (12s → 12s → 28s, creciendo) — Gemini
-no transcribe tan rápido como se lo pedimos, y pedirle más seguido solo genera
-una cola. 5s es el punto medido como estable contra una charla real de 15+
-minutos. El detalle completo está en los comentarios de
-[`liveTranscriber.ts`](backend/src/services/gemini/liveTranscriber.ts)
-(`CYCLE_MS`) — activar `DEBUG_LIVE=1` antes de tocar ese valor.
+Las traducciones corren con concurrencia acotada por sala
+(`MAX_CONCURRENT_TRANSLATIONS` en [`stageManager.ts`](backend/src/services/stages/stageManager.ts))
+en vez de una cola estrictamente secuencial — necesario porque, con este
+modelo, las oraciones finales llegan mucho más seguido que antes y una cola
+de a una se atrasaba sin límite. El frontend ordena los subtítulos por `seq`
+para que completar fuera de orden no se note.
+
+Nota histórica: la primera versión usaba el modelo conversacional
+`gemini-3.8-live`, que solo entrega texto al cerrar manualmente una
+"actividad" — llegaba en tandas de ~5-10s y no soportaba resultados
+incrementales. Ese camino sigue andando como fallback (`liveTranscriber.ts`,
+`CYCLE_MS`) si se cambia `GEMINI_LIVE_MODEL`, pero el default ya no lo usa.
 
 ## Configurar salas / glosario
 

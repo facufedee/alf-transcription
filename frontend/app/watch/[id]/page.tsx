@@ -37,6 +37,54 @@ export default function WatchStagePage({ params }: PageProps) {
 
   const { finals, partial, isLive, isConnected } = useStageCaptions(stageId, currentLang);
 
+  const isMock = searchParams.get('mock') === 'true';
+
+  const mockFinals = [
+    {
+      seq: 1,
+      text:
+        currentLang === 'es'
+          ? 'Bienvenidos a Nerdearla 2026 en el Escenario Principal.'
+          : 'Welcome to Nerdearla 2026 on the Main Stage.',
+      isFinal: true,
+      timestamp: Date.now() - 25000,
+    },
+    {
+      seq: 2,
+      text:
+        currentLang === 'es'
+          ? 'Hoy vamos a profundizar en cómo escalar clusters de Kubernetes utilizando eBPF y observabilidad en tiempo real sin sobrecargar el control plane.'
+          : "Today we're diving into scaling Kubernetes clusters using eBPF and real-time observability without overloading the control plane.",
+      isFinal: true,
+      timestamp: Date.now() - 12000,
+    },
+    {
+      seq: 3,
+      text:
+        currentLang === 'es'
+          ? 'La gran ventaja de procesar el audio con la Live API de Gemini es que logramos capturar la cadencia natural del orador y el glosario técnico con latencia predecible.'
+          : "The major advantage of processing audio with the Gemini Live API is capturing the speaker's natural cadence and technical glossary with predictable latency.",
+      isFinal: true,
+      timestamp: Date.now() - 4000,
+    },
+  ];
+
+  const mockPartial = isMock
+    ? {
+        seq: 4,
+        text:
+          currentLang === 'es'
+            ? 'Analizando métricas de telemetría distribuida y rendimiento...'
+            : 'Analyzing distributed telemetry metrics and performance...',
+        isFinal: false,
+        timestamp: Date.now(),
+      }
+    : null;
+
+  const displayFinals = finals.length > 0 ? finals : isMock ? mockFinals : [];
+  const displayPartial = partial || mockPartial;
+  const displayLive = isLive || isMock;
+
   // Switch language handler
   const setLanguage = (newLang: Lang) => {
     const params = new URLSearchParams(searchParams.toString());
@@ -92,7 +140,7 @@ export default function WatchStagePage({ params }: PageProps) {
                 {stageId}
               </h1>
 
-              {isLive ? (
+              {displayLive ? (
                 <span className="flex items-center gap-1.5 rounded-full bg-red-950/80 border border-red-500/40 px-2.5 py-0.5 font-mono text-[10px] font-bold text-red-400">
                   <span className="h-1.5 w-1.5 rounded-full bg-red-500 animate-pulse" />
                   EN VIVO
@@ -171,7 +219,7 @@ export default function WatchStagePage({ params }: PageProps) {
       </header>
 
       {/* Connection notification if offline */}
-      {!isConnected && (
+      {!isConnected && !isMock && (
         <div className="bg-amber-950/80 border-b border-amber-500/30 px-4 py-2 text-center text-xs text-amber-200">
           Reconectando con el servidor en tiempo real...
         </div>
@@ -184,13 +232,13 @@ export default function WatchStagePage({ params }: PageProps) {
         className="relative flex-1 overflow-y-auto px-6 py-10 md:px-16 lg:px-24"
       >
         <div className="mx-auto max-w-4xl space-y-6">
-          {finals.length === 0 && !partial && (
+          {displayFinals.length === 0 && !displayPartial && (
             <div className="flex min-h-[50vh] flex-col items-center justify-center text-center">
               <span className="font-mono text-xs uppercase tracking-[0.25em] text-[#f3e6dc]/40">
-                {isLive ? 'Esperando audio...' : 'Escenario en espera'}
+                {displayLive ? 'Esperando audio...' : 'Escenario en espera'}
               </span>
               <p className="mt-3 text-sm text-[#f3e6dc]/60 max-w-md">
-                {isLive
+                {displayLive
                   ? 'El audio está siendo procesado en vivo por Gemini. Los subtítulos aparecerán aquí en cuanto comience la voz.'
                   : 'Cuando el orador comience a hablar, los subtítulos y la traducción aparecerán automáticamente en tiempo real.'}
               </p>
@@ -198,18 +246,18 @@ export default function WatchStagePage({ params }: PageProps) {
           )}
 
           {/* Finalized Captions */}
-          {finals.map((c) => (
+          {displayFinals.map((c) => (
             <p key={c.seq} className={`${FONT_CLASSES[fontSize]} text-[#f3e6dc] tracking-normal`}>
               {c.text}
             </p>
           ))}
 
           {/* In-progress Partial Caption */}
-          {partial && (
+          {displayPartial && (
             <p
               className={`${FONT_CLASSES[fontSize]} text-[#f3e6dc]/65 italic animate-pulse transition-opacity duration-150`}
             >
-              {partial.text}
+              {displayPartial.text}
             </p>
           )}
 

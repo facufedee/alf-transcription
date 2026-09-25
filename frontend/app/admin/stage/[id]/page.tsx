@@ -1,7 +1,9 @@
 'use client';
 
-import { useState, useRef } from 'react';
+import { useState, useRef, useEffect } from 'react';
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
+import { BACKEND_URL } from '@/lib/config';
 import { useIngestStream } from '@/hooks/useIngestStream';
 import { useStageCaptions } from '@/hooks/useStageCaptions';
 import { Lang } from '@shared/events';
@@ -13,7 +15,22 @@ interface PageProps {
 export default function AdminStageControlPage({ params }: PageProps) {
   const { id: stageId } = params;
 
-  const [sourceLang, setSourceLang] = useState<Lang>('en');
+  const [sourceLang, setSourceLang] = useState<Lang>(() => {
+    if (stageId.includes('3') || stageId.includes('es')) return 'es';
+    return 'en';
+  });
+
+  useEffect(() => {
+    fetch(`${BACKEND_URL}/stages`)
+      .then((res) => (res.ok ? res.json() : []))
+      .then((stages: Array<{ id: string; sourceLang: Lang }>) => {
+        const found = stages.find((s) => s.id === stageId);
+        if (found?.sourceLang) {
+          setSourceLang(found.sourceLang);
+        }
+      })
+      .catch(() => {});
+  }, [stageId]);
   const [inputMode, setInputMode] = useState<'mic' | 'file'>('mic');
   const [selectedFile, setSelectedFile] = useState<File | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
@@ -29,8 +46,51 @@ export default function AdminStageControlPage({ params }: PageProps) {
     stopStreaming,
   } = useIngestStream(stageId);
 
+  const searchParams = useSearchParams();
+  const isMock = searchParams.get('mock') === 'true';
+
   // Monitor live subtitles produced by Gemini Live on this stage
   const { finals, partial } = useStageCaptions(stageId, sourceLang);
+
+  const mockFinals = [
+    {
+      seq: 1,
+      text:
+        sourceLang === 'es'
+          ? 'Iniciando transmisión de audio PCM16 16kHz hacia Gemini Live API.'
+          : 'Starting PCM16 16kHz audio stream to Gemini Live API.',
+      isFinal: true,
+      timestamp: Date.now() - 22000,
+    },
+    {
+      seq: 2,
+      text:
+        sourceLang === 'es'
+          ? 'Nerdearla 2026: Conferencia sobre Observabilidad y Sistemas Distribuidos.'
+          : 'Nerdearla 2026: Conference on Observability and Distributed Systems.',
+      isFinal: true,
+      timestamp: Date.now() - 10000,
+    },
+  ];
+
+  const mockPartial = isMock
+    ? {
+        seq: 3,
+        text:
+          sourceLang === 'es'
+            ? 'Monitoreando buffers y pipeline de traducción...'
+            : 'Monitoring buffers and translation pipeline...',
+        isFinal: false,
+        timestamp: Date.now(),
+      }
+    : null;
+
+  const displayStreaming = isStreaming || isMock;
+  const displayChunks = chunksSent > 0 ? chunksSent : isMock ? 342 : 0;
+  const displayDuration = durationSeconds > 0 ? durationSeconds : isMock ? 85 : 0;
+  const displayVu = vuLevel > 0 ? vuLevel : isMock ? 68 : 0;
+  const displayFinals = finals.length > 0 ? finals : isMock ? mockFinals : [];
+  const displayPartial = partial || mockPartial;
 
   const handleToggleStream = async () => {
     if (isStreaming) {
@@ -64,7 +124,7 @@ export default function AdminStageControlPage({ params }: PageProps) {
                 <span className="font-mono text-xs uppercase tracking-[0.2em] text-[#f3e6dc]/60">
                   Control de Escenario
                 </span>
-                {isStreaming ? (
+                {displayStreaming ? (
                   <span className="inline-flex items-center gap-1 rounded-full bg-red-950/80 border border-red-500/40 px-2 py-0.5 font-mono text-[10px] font-bold text-red-400">
                     <span className="h-1.5 w-1.5 rounded-full bg-red-500 animate-pulse" />
                     TRANSMITIENDO EN VIVO
@@ -212,15 +272,15 @@ export default function AdminStageControlPage({ params }: PageProps) {
               <div className="mt-6">
                 <div className="flex items-center justify-between text-xs font-mono text-[#f3e6dc]/60">
                   <span>Vúmetro de Entrada:</span>
-                  <span>{vuLevel}%</span>
+                  <span>{displayVu}%</span>
                 </div>
                 <div className="mt-2 h-3 w-full overflow-hidden rounded-full bg-[#140b07] border border-[#f3e6dc]/15 p-0.5">
                   <div
                     className="h-full rounded-full transition-all duration-75 ease-out"
                     style={{
-                      width: `${vuLevel}%`,
+                      width: `${displayVu}%`,
                       backgroundColor:
-                        vuLevel > 80 ? '#ef4444' : vuLevel > 50 ? '#f59e0b' : '#10b981',
+                        displayVu > 80 ? '#ef4444' : displayVu > 50 ? '#f59e0b' : '#10b981',
                     }}
                   />
                 </div>
@@ -230,10 +290,10 @@ export default function AdminStageControlPage({ params }: PageProps) {
               <div className="mt-8">
                 <button
                   type="button"
-                  disabled={isConnecting || (inputMode === 'file' && !selectedFile && !isStreaming)}
+                  disabled={isConnecting || (inputMode === 'file' && !selectedFile && !displayStreaming)}
                   onClick={handleToggleStream}
                   className={`w-full flex items-center justify-center gap-3 rounded-full py-4 text-sm font-semibold transition active:scale-[0.99] ${
-                    isStreaming
+                    displayStreaming
                       ? 'bg-red-600 text-white hover:bg-red-500 shadow-[0_0_25px_rgba(239,68,68,0.4)]'
                       : 'bg-[#f3e6dc] text-[#140b07] hover:bg-white shadow-[0_0_20px_rgba(243,230,220,0.2)]'
                   } ${isConnecting ? 'opacity-70 cursor-wait' : ''}`}
@@ -243,7 +303,7 @@ export default function AdminStageControlPage({ params }: PageProps) {
                       <span className="h-4 w-4 animate-spin rounded-full border-2 border-[#140b07] border-t-transparent" />
                       Conectando con el servidor...
                     </>
-                  ) : isStreaming ? (
+                  ) : displayStreaming ? (
                     <>
                       <span className="h-3 w-3 rounded-full bg-white animate-pulse" />
                       Detener Transmisión
@@ -258,17 +318,17 @@ export default function AdminStageControlPage({ params }: PageProps) {
               </div>
 
               {/* Streaming Stats */}
-              {isStreaming && (
+              {displayStreaming && (
                 <div className="mt-6 grid grid-cols-2 gap-3 pt-6 border-t border-[#f3e6dc]/10 text-center font-mono text-xs">
                   <div className="rounded-2xl bg-[#140b07]/60 p-3 border border-[#f3e6dc]/10">
                     <p className="text-[#f3e6dc]/50">TIEMPO AL AIRE</p>
                     <p className="mt-1 text-base font-semibold text-[#f3e6dc]">
-                      {formatTime(durationSeconds)}
+                      {formatTime(displayDuration)}
                     </p>
                   </div>
                   <div className="rounded-2xl bg-[#140b07]/60 p-3 border border-[#f3e6dc]/10">
                     <p className="text-[#f3e6dc]/50">CHUNKS ENVIADOS</p>
-                    <p className="mt-1 text-base font-semibold text-[#f3e6dc]">{chunksSent}</p>
+                    <p className="mt-1 text-base font-semibold text-[#f3e6dc]">{displayChunks}</p>
                   </div>
                 </div>
               )}
@@ -291,27 +351,27 @@ export default function AdminStageControlPage({ params }: PageProps) {
               </div>
 
               <div className="mt-4 flex-1 overflow-y-auto space-y-4 max-h-[480px] pr-2">
-                {finals.length === 0 && !partial && (
+                {displayFinals.length === 0 && !displayPartial && (
                   <div className="flex h-full items-center justify-center text-center p-8 text-xs text-[#f3e6dc]/40 font-mono">
-                    {isStreaming
+                    {displayStreaming
                       ? 'Hablá por el micrófono o reproducí el audio para ver los subtítulos...'
                       : 'La transmisión está inactiva. Hacé click en "Transmitir en Vivo" para comenzar.'}
                   </div>
                 )}
 
-                {finals.map((c) => (
+                {displayFinals.map((c) => (
                   <p key={c.seq} className="text-sm text-[#f3e6dc] leading-relaxed">
                     <span className="font-mono text-[10px] text-[#f3e6dc]/40 mr-2">#{c.seq}</span>
                     {c.text}
                   </p>
                 ))}
 
-                {partial && (
+                {displayPartial && (
                   <p className="text-sm text-[#f3e6dc]/70 italic animate-pulse">
                     <span className="font-mono text-[10px] text-[#f3e6dc]/40 mr-2">
-                      #{partial.seq}
+                      #{displayPartial.seq}
                     </span>
-                    {partial.text}
+                    {displayPartial.text}
                   </p>
                 )}
               </div>

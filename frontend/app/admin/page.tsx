@@ -10,17 +10,35 @@ interface Stage {
   live: boolean;
 }
 
-export default async function AdminPage() {
-  const session = await auth();
+interface AdminPageProps {
+  searchParams?: { mock?: string };
+}
 
-  if (!session?.user) {
+export default async function AdminPage({ searchParams }: AdminPageProps) {
+  let session = await auth();
+  // Local-only demo shortcut so judges/preview don't need OAuth set up — must
+  // never bypass login once actually deployed (see auth.config.ts's same gate).
+  const isMock = process.env.NODE_ENV !== 'production' && searchParams?.mock === 'true';
+
+  if (!session?.user && !isMock) {
     redirect('/login?callbackUrl=/admin');
+  }
+
+  if (!session?.user && isMock) {
+    session = {
+      user: {
+        name: 'Operador Nerdearla (Demo Jueces)',
+        email: 'jurado-vibeathon@nerdearla.com',
+      },
+      expires: new Date(Date.now() + 3600000).toISOString(),
+    };
   }
 
   // Fetch stages from backend or fallback to defaults
   let stages: Stage[] = [
     { id: 'sala-1', name: 'Escenario Principal (Main Stage)', sourceLang: 'en', live: false },
-    { id: 'sala-2', name: 'Escenario 2 (Workshop Room)', sourceLang: 'es', live: false },
+    { id: 'sala-2', name: 'Escenario 2 (Workshop Room)', sourceLang: 'en', live: false },
+    { id: 'sala-3', name: 'Escenario 3 (Comunidad ES)', sourceLang: 'es', live: false },
   ];
 
   try {

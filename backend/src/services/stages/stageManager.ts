@@ -7,6 +7,12 @@ import { Segmenter } from '../pipeline/segmenter';
 
 const HISTORY_LIMIT = 1000; // final captions kept per stage and language
 const CONTEXT_SENTENCES = 2;
+// Translation used to run as one strict FIFO chain per stage. That's fine when
+// finals arrive every 5-10s, but the transcribe-model path finalizes much more
+// often — a single sequential queue falls further and further behind and only
+// catches up once the operator stops. Run a few in flight instead; captions
+// carry `seq` and the frontend sorts by it, so out-of-order completion is fine.
+const MAX_CONCURRENT_TRANSLATIONS = 4;
 
 export interface StageStats {
   startedAt?: number;
@@ -22,7 +28,8 @@ interface Stage {
   transcriber?: LiveTranscriber;
   segmenter?: Segmenter;
   history: Record<Lang, Caption[]>;
-  translation: Promise<void>; // chain that keeps translations in order
+  translationQueue: Array<() => Promise<void>>;
+  translationInFlight: number;
   stats: StageStats;
 }
 
@@ -45,7 +52,8 @@ export class StageManager extends EventEmitter<Events> {
       config,
       live: false,
       history: emptyHistory(),
-      translation: Promise.resolve(),
+      translationQueue: [],
+      translationInFlight: 0,
       stats: { finals: 0, reconnects: 0 },
     });
   }
@@ -79,6 +87,7 @@ export class StageManager extends EventEmitter<Events> {
       glossary: config.glossary,
     });
 
+    transcriber.on('interim', (text) => segmenter.pushInterim(text));
     transcriber.on('text', (fragment) => segmenter.push(fragment));
     transcriber.on('status', (s) => s === 'reconnecting' && stage.stats.reconnects++);
     transcriber.on('error', (err) => {
@@ -98,6 +107,8 @@ export class StageManager extends EventEmitter<Events> {
     stage.live = true;
     stage.stats = { startedAt: Date.now(), finals: 0, reconnects: 0 };
     stage.history = emptyHistory();
+    stage.translationQueue = [];
+    stage.translationInFlight = 0;
     this.emit('status', { stageId: id, live: true });
 
     transcriber.start();
@@ -129,7 +140,7 @@ export class StageManager extends EventEmitter<Events> {
 
     for (const to of LANGS) {
       if (to === from) continue;
-      stage.translation = stage.translation.then(async () => {
+      stage.translationQueue.push(async () => {
         const t0 = Date.now();
         try {
           const translated = await translate({ text, from, to, glossary: stage.config.glossary, context });
@@ -139,6 +150,22 @@ export class StageManager extends EventEmitter<Events> {
           stage.stats.lastError = err instanceof Error ? err.message : String(err);
           console.error(`[${stage.config.id}] translation failed: ${stage.stats.lastError}`);
         }
+      });
+    }
+    this.pumpTranslationQueue(stage);
+  }
+
+  /** Runs queued translations with bounded concurrency instead of one strict
+   * FIFO chain — a single sequential queue falls behind once finals arrive
+   * faster than a translation round-trip takes. Captions carry `seq` and the
+   * frontend sorts by it, so completing out of order is fine. */
+  private pumpTranslationQueue(stage: Stage) {
+    while (stage.translationInFlight < MAX_CONCURRENT_TRANSLATIONS && stage.translationQueue.length > 0) {
+      const job = stage.translationQueue.shift()!;
+      stage.translationInFlight++;
+      job().finally(() => {
+        stage.translationInFlight--;
+        this.pumpTranslationQueue(stage);
       });
     }
   }

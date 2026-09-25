@@ -2,10 +2,19 @@ import type { Metadata } from 'next';
 import '../styles/globals.css';
 
 export const metadata: Metadata = {
-  title: 'ALF - Real-time Conference Transcription',
+  title: 'ALF (Audio Live Feed) — Transcripción y Traducción en Tiempo Real',
   description:
-    'Alien Live Feed - Real-time transcription for live conferences with instant subtitles in multiple languages',
-  keywords: ['transcription', 'conference', 'real-time', 'accessibility'],
+    'ALF (Audio Live Feed) — Transcripción y traducción en tiempo real para conferencias masivas (Nerdearla 2026), impulsado por Gemini Live API y Gemini Flash.',
+  keywords: [
+    'ALF',
+    'Audio Live Feed',
+    'transcription',
+    'conference',
+    'real-time',
+    'accessibility',
+    'nerdearla',
+    'gemini-live',
+  ],
 };
 
 export default function RootLayout({

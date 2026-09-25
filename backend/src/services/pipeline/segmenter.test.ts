@@ -51,3 +51,40 @@ test('flushes on silence', async () => {
   await new Promise((r) => setTimeout(r, 50));
   assert.deepEqual(finals, [['so that is all', 0]]);
 });
+
+test('emits partials from pushInterim without corrupting seq or finals', () => {
+  const s = new Segmenter({ silenceMs: 10_000 });
+  const { finals, partials } = collect(s);
+  s.pushInterim('Hello');
+  s.pushInterim('Hello everyone');
+  assert.deepEqual(partials, [
+    ['Hello', 0],
+    ['Hello everyone', 0],
+  ]);
+  assert.equal(finals.length, 0);
+
+  s.push('Hello everyone and welcome to the stage.');
+  assert.deepEqual(finals, [['Hello everyone and welcome to the stage.', 0]]);
+  s.dispose();
+});
+
+test('cuts completed sentences in pushInterim when next sentence starts', () => {
+  const s = new Segmenter({ silenceMs: 10_000 });
+  const { finals, partials } = collect(s);
+  s.pushInterim('Hi everyone and welcome to Nerdearla.');
+  assert.equal(finals.length, 0); // No next sentence yet
+
+  s.pushInterim('Hi everyone and welcome to Nerdearla. Today I want to talk');
+  assert.deepEqual(finals, [['Hi everyone and welcome to Nerdearla.', 0]]);
+  assert.deepEqual(partials.at(-1), ['Today I want to talk', 1]);
+
+  s.pushInterim('Hi everyone and welcome to Nerdearla. Today I want to talk about Kubernetes in production.');
+  assert.equal(finals.length, 1);
+
+  s.push('Hi everyone and welcome to Nerdearla. Today I want to talk about Kubernetes in production.');
+  assert.deepEqual(finals, [
+    ['Hi everyone and welcome to Nerdearla.', 0],
+    ['Today I want to talk about Kubernetes in production.', 1],
+  ]);
+  s.dispose();
+});

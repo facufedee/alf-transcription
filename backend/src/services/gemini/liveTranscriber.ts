@@ -45,7 +45,8 @@ export interface LiveTranscriberOptions {
 }
 
 type Events = {
-  text: [fragment: string]; // incremental transcription, append to what came before
+  interim: [text: string]; // real-time in-flight partial transcription
+  text: [fragment: string]; // confirmed / completed transcription, append to what came before
   status: [status: 'connecting' | 'live' | 'reconnecting' | 'stopped'];
   error: [error: Error];
 };
@@ -149,23 +150,24 @@ export class LiveTranscriber extends EventEmitter<Events> {
 
   private buildConfig() {
     const glossary = this.opts.glossary?.trim();
+    const isTranscribeModel = env.GEMINI_LIVE_MODEL.includes('transcribe');
 
     return {
-      // gemini-3.8-live and its predecessors only accept AUDIO as a response
-      // modality; we never use the audio itself since the model is instructed
-      // to stay silent — inputAudioTranscription below is what we actually read.
-      responseModalities: [Modality.AUDIO],
+      // Conversational models (gemini-3.8-live) require AUDIO response modality.
+      // Dedicated transcription models (gemini-3.5-transcribe-live) do not.
+      ...(isTranscribeModel ? {} : { responseModalities: [Modality.AUDIO] }),
       inputAudioTranscription: {},
       systemInstruction: [
         `You are a passive listener at a tech conference talk in ${LANG_NAMES[this.opts.sourceLang]}.`,
-        'Never reply, never speak, never produce any output.',
+        isTranscribeModel ? '' : 'Never reply, never speak, never produce any output.',
         glossary ? `Terms and names that may be mentioned: ${glossary}` : '',
       ]
         .filter(Boolean)
         .join('\n'),
-      realtimeInputConfig: env.GEMINI_LIVE_MANUAL_ACTIVITY
-        ? { automaticActivityDetection: { disabled: true } }
-        : undefined,
+      realtimeInputConfig:
+        !isTranscribeModel && env.GEMINI_LIVE_MANUAL_ACTIVITY
+          ? { automaticActivityDetection: { disabled: true } }
+          : undefined,
       contextWindowCompression: { slidingWindow: {} },
       sessionResumption: this.resumeHandle ? { handle: this.resumeHandle } : {},
     };
@@ -173,11 +175,12 @@ export class LiveTranscriber extends EventEmitter<Events> {
 
   /** Runs once per session, whenever both a session and its setupComplete are
    * in hand — regardless of which arrived first. Sends the initial
-   * activityStart, starts the flush cycle, and flushes buffered audio. */
+   * activityStart, starts the flush cycle (if manual mode), and flushes buffered audio. */
   private activate() {
     if (!this.session || !this.setupSeen || this.setupDone) return;
     this.setupDone = true;
-    if (env.GEMINI_LIVE_MANUAL_ACTIVITY) {
+    const isTranscribeModel = env.GEMINI_LIVE_MODEL.includes('transcribe');
+    if (!isTranscribeModel && env.GEMINI_LIVE_MANUAL_ACTIVITY) {
       this.session.sendRealtimeInput({ activityStart: {} });
       clearInterval(this.cycleTimer);
       this.cycleTimer = setInterval(() => this.cycleActivity(), CYCLE_MS);
@@ -198,6 +201,9 @@ export class LiveTranscriber extends EventEmitter<Events> {
     if (msg.sessionResumptionUpdate?.resumable && msg.sessionResumptionUpdate.newHandle) {
       this.resumeHandle = msg.sessionResumptionUpdate.newHandle;
     }
+
+    const interim = msg.serverContent?.interimInputTranscription?.text;
+    if (interim) this.emit('interim', interim);
 
     const fragment = msg.serverContent?.inputTranscription?.text;
     if (fragment) this.emit('text', fragment);

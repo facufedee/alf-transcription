@@ -53,12 +53,11 @@ export function useStageCaptions(stageId: string, lang: Lang): UseStageCaptionsR
       if (caption.isFinal) {
         setFinals((prev) => {
           const index = prev.findIndex((c) => c.seq === caption.seq);
-          if (index >= 0) {
-            const next = [...prev];
-            next[index] = caption;
-            return next;
-          }
-          return [...prev, caption];
+          const next = index >= 0 ? [...prev.slice(0, index), caption, ...prev.slice(index + 1)] : [...prev, caption];
+          // Translations can now resolve out of arrival order (backend runs them
+          // concurrently for throughput) — keep the transcript in speech order.
+          next.sort((a, b) => a.seq - b.seq);
+          return next;
         });
         setPartial((currentPartial) =>
           currentPartial?.seq === caption.seq ? null : currentPartial

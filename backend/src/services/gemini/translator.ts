@@ -51,6 +51,9 @@ async function translateOnce({ text, from, to, glossary, context = [] }: Transla
       systemInstruction,
       temperature: 0.2,
       maxOutputTokens: 512,
+      thinkingConfig: {
+        thinkingBudget: 50,
+      },
     },
   });
 

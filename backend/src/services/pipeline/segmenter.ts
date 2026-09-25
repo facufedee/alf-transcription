@@ -12,6 +12,8 @@ type Events = {
 };
 
 const SENTENCE_END = /[.!?…](?=\s|$)/g;
+const SENTENCE_CUT = /([.!?…])\s+(?=\S)/g;
+const CLAUSE_CUT = /([,;:—])\s+(?=\S)/g;
 
 /**
  * Turns the stream of transcription fragments into captions:
@@ -19,6 +21,8 @@ const SENTENCE_END = /[.!?…](?=\s|$)/g;
  */
 export class Segmenter extends EventEmitter<Events> {
   private buffer = '';
+  private interimCommittedChars = 0;
+  private lastInterimText = '';
   private seq = 0;
   private timer?: NodeJS.Timeout;
   private readonly minChars: number;
@@ -27,15 +31,85 @@ export class Segmenter extends EventEmitter<Events> {
 
   constructor(opts: SegmenterOptions = {}) {
     super();
-    this.minChars = opts.minChars ?? 20;
-    this.maxChars = opts.maxChars ?? 180;
+    this.minChars = opts.minChars ?? 10;
+    this.maxChars = opts.maxChars ?? 140;
     this.silenceMs = opts.silenceMs ?? 1200;
   }
 
   push(fragment: string) {
-    this.buffer += fragment;
-    this.cutSentences();
-    if (this.buffer.trim()) this.emit('partial', normalize(this.buffer), this.seq);
+    let toPush = fragment;
+    if (this.interimCommittedChars > 0) {
+      toPush = fragment.slice(this.interimCommittedChars);
+      this.interimCommittedChars = 0;
+    }
+    this.lastInterimText = '';
+
+    if (toPush.trim()) {
+      if (this.buffer && !this.buffer.endsWith(' ') && !toPush.startsWith(' ')) {
+        this.buffer += ' ';
+      }
+      this.buffer += toPush;
+      this.cutSentences();
+      if (this.buffer.trim()) this.emit('partial', normalize(this.buffer), this.seq);
+    }
+
+    clearTimeout(this.timer);
+    this.timer = setTimeout(() => this.flush(), this.silenceMs);
+  }
+
+  pushInterim(text: string) {
+    this.lastInterimText = text;
+    while (this.interimCommittedChars < text.length) {
+      const uncommitted = text.slice(this.interimCommittedChars).trim();
+      if (!uncommitted) break;
+
+      let cutFound = false;
+
+      // 1. Natural sentence end followed by next word (e.g. "...Nerdearla. Hoy...")
+      for (const m of uncommitted.matchAll(SENTENCE_CUT)) {
+        const cutIdx = m.index! + 1;
+        const sentence = normalize(uncommitted.slice(0, cutIdx));
+        if (sentence.length >= this.minChars) {
+          this.emit('final', sentence, this.seq++);
+          this.interimCommittedChars += uncommitted.slice(0, cutIdx + m[0].length - 1).length;
+          cutFound = true;
+          break;
+        }
+      }
+
+      // 2. If speaker talks continuously without sentence punctuation for >70 chars, cut at comma/clause
+      if (!cutFound && uncommitted.length >= 70) {
+        for (const m of uncommitted.matchAll(CLAUSE_CUT)) {
+          const cutIdx = m.index! + 1;
+          const clause = normalize(uncommitted.slice(0, cutIdx));
+          if (clause.length >= 25) {
+            this.emit('final', clause, this.seq++);
+            this.interimCommittedChars += uncommitted.slice(0, cutIdx + m[0].length - 1).length;
+            cutFound = true;
+            break;
+          }
+        }
+      }
+
+      // 3. Fallback for run-on speech without any punctuation exceeding maxChars
+      if (!cutFound && uncommitted.length >= this.maxChars) {
+        const space = uncommitted.lastIndexOf(' ', this.maxChars);
+        const cutIdx = space > 0 ? space : this.maxChars;
+        const chunk = normalize(uncommitted.slice(0, cutIdx));
+        if (chunk.length >= this.minChars) {
+          this.emit('final', chunk, this.seq++);
+          this.interimCommittedChars += cutIdx;
+          cutFound = true;
+        }
+      }
+
+      if (!cutFound) break;
+    }
+
+    const remainder = text.slice(this.interimCommittedChars).trim();
+    const combined = this.buffer ? `${this.buffer} ${remainder}` : remainder;
+    const clean = normalize(combined);
+    if (clean) this.emit('partial', clean, this.seq);
 
     clearTimeout(this.timer);
     this.timer = setTimeout(() => this.flush(), this.silenceMs);
@@ -43,8 +117,17 @@ export class Segmenter extends EventEmitter<Events> {
 
   flush() {
     clearTimeout(this.timer);
-    const text = normalize(this.buffer);
+    let text = normalize(this.buffer);
     this.buffer = '';
+
+    // If buffer was empty but interim had trailing uncommitted words, finalize them
+    if (!text && this.lastInterimText) {
+      const uncommitted = this.lastInterimText.slice(this.interimCommittedChars).trim();
+      if (uncommitted) text = normalize(uncommitted);
+      this.interimCommittedChars = 0;
+      this.lastInterimText = '';
+    }
+
     if (text) this.emit('final', text, this.seq++);
   }
 
