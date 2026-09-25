@@ -32,7 +32,7 @@ intérpretes humanos: buscamos la mejor solución **abierta**.
 | Criterio | Nuestra respuesta |
 |---|---|
 | **Calidad** (incl. términos técnicos) | Glosario por sesión inyectado en el prompt de Gemini (nombres de speakers, tecnologías) |
-| **Latencia** | Gemini Live streaming; parciales en pantalla, finales se reemplazan; latencia medida y visible |
+| **Latencia** | Medida y documentada: ~5-10s por tanda (no palabra por palabra — la Live API de Gemini solo entrega `inputTranscription` al cerrar actividad; ciclos más cortos probados y descartados, empeoraban el delay). Detalle en README § Latencia |
 | **Escalabilidad** | 1 pipeline aislado por escenario; costo por hora documentado; guía para escalar horizontal |
 | **Despliegue y operación** | `docker compose up` + guía Cloud Run; panel de operación con estado de cada sala |
 | **Innovación** | Overlay para OBS, export SRT/VTT, glosario, panel de monitoreo |
@@ -67,7 +67,7 @@ intérpretes humanos: buscamos la mejor solución **abierta**.
 |---|---|---|
 | Hosting frontend | Vercel | Ya está andando |
 | Hosting backend | **Google Cloud Run** (WebSockets, `min-instances=1`, `max-instances=1`) | Vercel no soporta sockets persistentes; usa los créditos de Google |
-| Transcripción | **Gemini Live API** con transcripción de audio de entrada | Streaming, baja latencia |
+| Transcripción | **Gemini Live API** con transcripción de audio de entrada | Streaming; latencia real ~5-10s por tanda, no palabra por palabra (medido) |
 | Traducción | **Gemini Flash (texto)** sobre cada frase final | Barato, sin API de Translate aparte |
 | SDK | `@google/genai` (reemplaza a `@google/generative-ai`, deprecado) | |
 | Estado | En memoria (1 instancia) + `stages.json` | Sin DB para el MVP |
@@ -143,10 +143,10 @@ alf-transcription/
 - [x] `/ingest` (token `INGEST_TOKEN`, ack en start/stop, valida tamaño de chunks) y `/watch` (manda historial al suscribirse)
 - [x] `samples/`: 2 audios TTS (EN Kubernetes, ES Postgres) + `npm run simulate -- sala-1:en:../samples/x.wav ...`
 - [x] Circuito probado sin Gemini: 2 escenarios en paralelo, start/stop limpio, sin reconexiones colgadas
-- [ ] **Probar con Gemini real** (bloqueado: la key tiene restricción de API) y elegir el modelo Live disponible
-- [ ] Validar que `GEMINI_LIVE_MANUAL_ACTIVITY=true` devuelve transcripción sin que el modelo responda
-- [ ] Sumar 2 charlas reales de Nerdearla a `samples/`
-- [ ] **Prueba de escala:** 5 escenarios en paralelo; anotar latencia y costo por hora → README
+- [x] **Probado con Gemini real**: modelos vigentes `gemini-3.8-live` / `gemini-3.5-flash-lite` (los viejos del roadmap original ya no existen)
+- [x] Validado `GEMINI_LIVE_MANUAL_ACTIVITY=true` con ciclo de `activityEnd`/`activityStart` cada 5s — el modelo genera una respuesta de audio trivial ("---") que se ignora, no interfiere
+- [ ] Sumar una charla real de Nerdearla a `samples/` (probada localmente con un MP3 bajado de YouTube, sin commitear por derechos de autor — ver README)
+- [ ] **Prueba de escala:** 5 escenarios en paralelo; anotar latencia y costo por hora → README (solo probado hasta 2 en paralelo)
 
 ### Fase 2 — Vista de audiencia + overlay · ~2 h
 - [ ] `/watch`: lista de escenarios con estado en vivo

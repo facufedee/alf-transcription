@@ -13,7 +13,8 @@ arquitectura, fases y contra qué nos evalúa el challenge.
 
 ## Qué incluye
 
-- 🎙️ Transcripción en tiempo real con la Live API de Gemini (`gemini-3.8-live`)
+- 🎙️ Transcripción con la Live API de Gemini (`gemini-3.8-live`) — llega en tandas
+  cada ~5-10 s, no palabra por palabra (ver **Latencia** abajo)
 - 🌍 Traducción EN↔ES por oración con Gemini (`gemini-3.5-flash-lite`)
 - 🖥️ Múltiples escenarios en paralelo, cada uno con su propia sesión de Gemini
 - 👀 Vista de audiencia (`/watch`) — elegís sesión + idioma
@@ -131,6 +132,20 @@ docker compose up --build
 
 Backend en `:5000`, frontend en `:3000`. El backend lee `backend/.env` (no se
 commitea, no se copia a la imagen — ver `.dockerignore`).
+
+## Latencia
+
+Medido con audio real (una charla completa de Nerdearla, no un clip de prueba):
+los subtítulos llegan en **tandas de ~5-10 segundos**, no palabra por palabra.
+
+Por qué: la Live API de Gemini solo entrega `inputTranscription` al cerrar una
+"actividad" (`activityEnd`). Probamos acortar ese ciclo a 2s esperando texto
+más fluido, pero **empeoró** la latencia (12s → 12s → 28s, creciendo) — Gemini
+no transcribe tan rápido como se lo pedimos, y pedirle más seguido solo genera
+una cola. 5s es el punto medido como estable contra una charla real de 15+
+minutos. El detalle completo está en los comentarios de
+[`liveTranscriber.ts`](backend/src/services/gemini/liveTranscriber.ts)
+(`CYCLE_MS`) — activar `DEBUG_LIVE=1` antes de tocar ese valor.
 
 ## Configurar salas / glosario
 
