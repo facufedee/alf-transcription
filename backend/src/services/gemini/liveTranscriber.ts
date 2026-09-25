@@ -15,6 +15,10 @@ const CONNECT_TIMEOUT_MS = 10_000;
 // real speech. So in manual mode we force a flush on a fixed cadence: close
 // and immediately reopen the "activity" every CYCLE_MS. The segmenter already
 // reassembles arbitrary fragments into sentences, so mid-word cuts are fine.
+// Tried 2s: made latency *worse* (11s, 12s, 28s — growing), not better — cycling
+// faster than Gemini can actually transcribe just queues up backlog. 5s measured
+// as the stable point against a real talk; don't lower this without re-measuring
+// with DEBUG_LIVE=1 and elapsed-time logging (see onMessage/cycleActivity).
 const CYCLE_MS = 5_000;
 // If resuming keeps failing, the handle itself is probably stale/rejected by
 // the server: drop it and fall back to a fresh session rather than retrying
@@ -62,6 +66,7 @@ export class LiveTranscriber extends EventEmitter<Events> {
   private reconnectTimer?: NodeJS.Timeout;
   private cycleTimer?: NodeJS.Timeout;
   private chunksIn = 0;
+  private startedAt = 0;
 
   constructor(private readonly opts: LiveTranscriberOptions) {
     super();
@@ -69,7 +74,12 @@ export class LiveTranscriber extends EventEmitter<Events> {
 
   /** Returns right away; progress is reported through 'status' and 'error' events. */
   start() {
+    this.startedAt = Date.now();
     void this.connect();
+  }
+
+  private elapsed() {
+    return `+${Date.now() - this.startedAt}ms`;
   }
 
   push(pcm: Buffer) {
@@ -178,7 +188,7 @@ export class LiveTranscriber extends EventEmitter<Events> {
   }
 
   private onMessage(msg: LiveServerMessage) {
-    if (process.env.DEBUG_LIVE) console.log(`[debug ${this.opts.label}]`, JSON.stringify(msg).slice(0, 400));
+    if (process.env.DEBUG_LIVE) console.log(`[debug ${this.opts.label} ${this.elapsed()}]`, JSON.stringify(msg).slice(0, 200));
 
     if (msg.setupComplete) {
       this.setupSeen = true;
@@ -217,7 +227,7 @@ export class LiveTranscriber extends EventEmitter<Events> {
    * Gemini flushes whatever input transcription it's accumulated so far,
    * instead of waiting on a turn boundary that may never come. */
   private cycleActivity() {
-    if (process.env.DEBUG_LIVE) console.log(`[debug ${this.opts.label}] cycleActivity tick, session=${!!this.session}`);
+    if (process.env.DEBUG_LIVE) console.log(`[debug ${this.opts.label} ${this.elapsed()}] cycleActivity tick, session=${!!this.session}`);
     if (!this.session) return;
     this.session.sendRealtimeInput({ activityEnd: {} });
     const session = this.session;
