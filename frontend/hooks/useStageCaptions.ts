@@ -21,6 +21,11 @@ export function useStageCaptions(stageId: string, lang: Lang): UseStageCaptionsR
   // Keep references to current stage and lang to ignore stale messages
   const stageRef = useRef(stageId);
   const langRef = useRef(lang);
+  // null = unknown yet (first status we see, e.g. a late joiner catching an
+  // already-live stage — keep the history the backend just sent). false = we
+  // saw it go offline, so the next live:true is a real restart from zero and
+  // any captions we're holding are from the previous run.
+  const wasLiveRef = useRef<boolean | null>(null);
 
   useEffect(() => {
     stageRef.current = stageId;
@@ -35,6 +40,7 @@ export function useStageCaptions(stageId: string, lang: Lang): UseStageCaptionsR
     // Reset local captions when stage or language changes
     setFinals([]);
     setPartial(null);
+    wasLiveRef.current = null;
 
     const onConnect = () => {
       setIsConnected(true);
@@ -69,6 +75,17 @@ export function useStageCaptions(stageId: string, lang: Lang): UseStageCaptionsR
 
     const onStageStatus = (status: StageStatus) => {
       if (status.stageId === stageRef.current) {
+        if (wasLiveRef.current === false && status.live) {
+          // Stage went offline and is now live again — a fresh run of the
+          // same stage, not a page we just opened. The backend already
+          // cleared its own history on restart; do the same here, or
+          // captions from the previous run stay stuck in the transcript
+          // forever (they never get replaced unless a new caption happens
+          // to land on the exact same seq).
+          setFinals([]);
+          setPartial(null);
+        }
+        wasLiveRef.current = status.live;
         setIsLive(status.live);
       }
     };

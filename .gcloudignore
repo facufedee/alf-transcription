@@ -1,0 +1,14 @@
+.git/
+.gitignore
+.claude/
+node_modules/
+frontend/
+samples/
+docs/
+*.md
+.next/
+dist/
+out/
+.env
+.env.*
+!.env.example

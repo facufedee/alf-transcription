@@ -24,6 +24,14 @@ const CYCLE_MS = 5_000;
 // the server: drop it and fall back to a fresh session rather than retrying
 // forever with a handle that will never be accepted.
 const MAX_RESUME_RETRIES = 3;
+// Confirmed with DEBUG_LIVE against a real ~90s talk: the transcribe model's
+// native VAD can just stop sending anything — no interim, no final, no
+// close, no error — mid-utterance, while we keep pushing audio. Forcing
+// manual activity cycling to work around it made transcription quality much
+// worse (see buildConfig), so instead: if Gemini goes fully quiet for this
+// long while a session is live, treat it as dead and reconnect.
+const STALL_TIMEOUT_MS = 15_000;
+const WATCHDOG_INTERVAL_MS = 5_000;
 
 function withTimeout<T>(promise: Promise<T>, ms: number, onTimeout: () => void) {
   return new Promise<T>((resolve, reject) => {
@@ -66,8 +74,18 @@ export class LiveTranscriber extends EventEmitter<Events> {
   private stopped = false;
   private reconnectTimer?: NodeJS.Timeout;
   private cycleTimer?: NodeJS.Timeout;
+  private watchdogTimer?: NodeJS.Timeout;
+  private lastMessageAt = 0;
   private chunksIn = 0;
   private startedAt = 0;
+
+  // Dedicated transcribe models emit BOTH interimInputTranscription (growing
+  // partial, handled by Segmenter.pushInterim) AND inputTranscription (a
+  // "final" fragment per turn, handled by the older Segmenter.push path).
+  // They describe the same speech — routing both to the segmenter double-cuts
+  // and double-translates every sentence. Only conversational models
+  // (gemini-3.8-live) lack interim support and need the `text` event.
+  private readonly isTranscribeModel = env.GEMINI_LIVE_MODEL.includes('transcribe');
 
   constructor(private readonly opts: LiveTranscriberOptions) {
     super();
@@ -101,6 +119,7 @@ export class LiveTranscriber extends EventEmitter<Events> {
     this.stopped = true;
     clearTimeout(this.reconnectTimer);
     clearInterval(this.cycleTimer);
+    clearInterval(this.watchdogTimer);
     this.generation++;
     this.session?.close();
     this.session = undefined;
@@ -150,7 +169,7 @@ export class LiveTranscriber extends EventEmitter<Events> {
 
   private buildConfig() {
     const glossary = this.opts.glossary?.trim();
-    const isTranscribeModel = env.GEMINI_LIVE_MODEL.includes('transcribe');
+    const isTranscribeModel = this.isTranscribeModel;
 
     return {
       // Conversational models (gemini-3.8-live) require AUDIO response modality.
@@ -164,6 +183,11 @@ export class LiveTranscriber extends EventEmitter<Events> {
       ]
         .filter(Boolean)
         .join('\n'),
+      // Tried forcing manual cycling on the transcribe model too (to work
+      // around the stall below) — made it much worse: it barely transcribed
+      // anything for 40s+ straight. Its native VAD wants to run undisturbed;
+      // the stall watchdog (see lastMessageAt / checkStall) handles recovery
+      // instead, without touching how this model is driven.
       realtimeInputConfig:
         !isTranscribeModel && env.GEMINI_LIVE_MANUAL_ACTIVITY
           ? { automaticActivityDetection: { disabled: true } }
@@ -179,18 +203,31 @@ export class LiveTranscriber extends EventEmitter<Events> {
   private activate() {
     if (!this.session || !this.setupSeen || this.setupDone) return;
     this.setupDone = true;
-    const isTranscribeModel = env.GEMINI_LIVE_MODEL.includes('transcribe');
-    if (!isTranscribeModel && env.GEMINI_LIVE_MANUAL_ACTIVITY) {
+    if (!this.isTranscribeModel && env.GEMINI_LIVE_MANUAL_ACTIVITY) {
       this.session.sendRealtimeInput({ activityStart: {} });
       clearInterval(this.cycleTimer);
       this.cycleTimer = setInterval(() => this.cycleActivity(), CYCLE_MS);
     }
+    this.lastMessageAt = Date.now();
+    clearInterval(this.watchdogTimer);
+    this.watchdogTimer = setInterval(() => this.checkStall(), WATCHDOG_INTERVAL_MS);
     for (const data of this.pending.splice(0)) {
       this.session.sendRealtimeInput({ audio: { data, mimeType: MIME_TYPE } });
     }
   }
 
+  /** Gemini can go completely silent mid-session (see STALL_TIMEOUT_MS) —
+   * reconnect if that happens instead of hanging forever. */
+  private checkStall() {
+    if (!this.session) return;
+    if (Date.now() - this.lastMessageAt > STALL_TIMEOUT_MS) {
+      this.emit('error', new Error(`Live session stalled (no messages for ${STALL_TIMEOUT_MS}ms), reconnecting`));
+      this.swapSession();
+    }
+  }
+
   private onMessage(msg: LiveServerMessage) {
+    this.lastMessageAt = Date.now();
     if (process.env.DEBUG_LIVE) console.log(`[debug ${this.opts.label} ${this.elapsed()}]`, JSON.stringify(msg).slice(0, 200));
 
     if (msg.setupComplete) {
@@ -206,7 +243,7 @@ export class LiveTranscriber extends EventEmitter<Events> {
     if (interim) this.emit('interim', interim);
 
     const fragment = msg.serverContent?.inputTranscription?.text;
-    if (fragment) this.emit('text', fragment);
+    if (fragment && !this.isTranscribeModel) this.emit('text', fragment);
 
     if (msg.goAway) {
       // Server will close soon: open the next session now so no audio is lost.
@@ -217,6 +254,7 @@ export class LiveTranscriber extends EventEmitter<Events> {
   private onClose(code: number, reason: string) {
     if (this.stopped) return;
     clearInterval(this.cycleTimer);
+    clearInterval(this.watchdogTimer);
     this.session = undefined;
     this.emit('error', new Error(`Live session closed (${code}) ${reason}`.trim()));
     this.scheduleReconnect();
@@ -224,6 +262,7 @@ export class LiveTranscriber extends EventEmitter<Events> {
 
   private swapSession() {
     clearInterval(this.cycleTimer);
+    clearInterval(this.watchdogTimer);
     const old = this.session;
     this.session = undefined; // buffer audio until the new session is ready
     void this.connect().finally(() => old?.close());

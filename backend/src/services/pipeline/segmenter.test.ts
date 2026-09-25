@@ -68,6 +68,67 @@ test('emits partials from pushInterim without corrupting seq or finals', () => {
   s.dispose();
 });
 
+test('a silence-timeout flush mid-stream does not cause the next pushInterim to re-emit already-committed text', async () => {
+  // Reproduces a real bug: Gemini's transcribe-model interim buffer for one
+  // utterance can keep growing across gaps longer than silenceMs (confirmed
+  // against a real recording, gaps up to ~2s were common) — it is NOT a sign
+  // the segment actually ended. flush() used to reset committed-chars
+  // tracking to 0 on that timeout, so the next pushInterim() re-discovered
+  // and re-emitted the whole thing already committed as a duplicate final.
+  const s = new Segmenter({ silenceMs: 20 });
+  const { finals } = collect(s);
+
+  s.pushInterim('Hi everyone and welcome to Nerdearla.');
+  s.pushInterim('Hi everyone and welcome to Nerdearla. Today I want to talk');
+  assert.deepEqual(finals, [['Hi everyone and welcome to Nerdearla.', 0]]);
+
+  await new Promise((r) => setTimeout(r, 50)); // silence timer fires flush()
+  assert.deepEqual(finals, [
+    ['Hi everyone and welcome to Nerdearla.', 0],
+    ['Today I want to talk', 1],
+  ]);
+
+  // Gemini's buffer never reset — the next message extends the same text.
+  s.pushInterim('Hi everyone and welcome to Nerdearla. Today I want to talk about Kubernetes in production.');
+  assert.deepEqual(finals, [
+    ['Hi everyone and welcome to Nerdearla.', 0],
+    ['Today I want to talk', 1],
+  ]);
+  s.dispose();
+});
+
+test('a retroactive word revision in already-committed text does not re-emit the whole prefix', () => {
+  // Reproduces a real bug: Gemini revised an already-delivered word
+  // ("OpenClaw" -> "OpenClo") as more audio arrived. Comparing the new text
+  // byte-for-byte against what we'd committed treated that one-character
+  // diff as "the buffer restarted" and re-committed the entire prefix as a
+  // duplicate final — and it kept happening on every later revision,
+  // snowballing into the whole transcript repeating from the start
+  // (confirmed against a real 2min+ recording).
+  const s = new Segmenter({ silenceMs: 10_000 });
+  const { finals } = collect(s);
+
+  s.pushInterim('Un mes con OpenClaw.');
+  s.pushInterim('Un mes con OpenClaw. Obviamente pasan cosas');
+  assert.deepEqual(finals, [['Un mes con OpenClaw.', 0]]);
+
+  // Same prefix, but Gemini revised "OpenClaw" to "OpenClo" retroactively.
+  s.pushInterim('Un mes con OpenClo. Obviamente pasan cosas y meses.');
+  assert.deepEqual(finals, [['Un mes con OpenClaw.', 0]]); // not re-committed
+  s.dispose();
+});
+
+test('cuts a sentence even when Gemini glues the next one on with no space', () => {
+  // Confirmed against a real recording: Gemini's transcription sometimes
+  // omits the space after sentence-ending punctuation ("eso.Fíjate que...").
+  // A cut still has to happen or the caption just keeps growing forever.
+  const s = new Segmenter({ silenceMs: 10_000 });
+  const { finals } = collect(s);
+  s.pushInterim('Le manda eso.Fíjate que arriba dice el usuario');
+  assert.deepEqual(finals, [['Le manda eso.', 0]]);
+  s.dispose();
+});
+
 test('cuts completed sentences in pushInterim when next sentence starts', () => {
   const s = new Segmenter({ silenceMs: 10_000 });
   const { finals, partials } = collect(s);

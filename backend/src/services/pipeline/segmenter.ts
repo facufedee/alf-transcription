@@ -12,7 +12,11 @@ type Events = {
 };
 
 const SENTENCE_END = /[.!?…](?=\s|$)/g;
-const SENTENCE_CUT = /([.!?…])\s+(?=\S)/g;
+// Gemini sometimes glues the next sentence straight onto the punctuation with
+// no space at all ("eso.Fíjate que...", confirmed against a real recording)
+// — require zero-or-more whitespace, and use the next sentence starting with
+// a capital/¿/¡ as the real signal instead of relying on a space existing.
+const SENTENCE_CUT = /([.!?…])\s*(?=[A-ZÁÉÍÓÚÑ¿¡])/g;
 const CLAUSE_CUT = /([,;:—])\s+(?=\S)/g;
 
 /**
@@ -23,6 +27,7 @@ export class Segmenter extends EventEmitter<Events> {
   private buffer = '';
   private interimCommittedChars = 0;
   private lastInterimText = '';
+  private lastFinalText = '';
   private seq = 0;
   private timer?: NodeJS.Timeout;
   private readonly minChars: number;
@@ -58,6 +63,18 @@ export class Segmenter extends EventEmitter<Events> {
   }
 
   pushInterim(text: string) {
+    // Tried detecting a "restarted" buffer by requiring the new text to
+    // start with exactly what we'd already committed — made things much
+    // worse: Gemini can revise a word it already sent (e.g. "OpenClaw" ->
+    // "OpenClo") as more audio context arrives, and that single-character
+    // diff looked like a restart, re-committing the ENTIRE prefix as new —
+    // repeating on every subsequent revision (confirmed against a real 2+
+    // minute recording: the whole transcript re-emitted from the start,
+    // over and over, each time slightly different). Only guard against the
+    // buffer actually getting shorter; never look back at what's committed.
+    if (text.length < this.interimCommittedChars) {
+      this.interimCommittedChars = 0;
+    }
     this.lastInterimText = text;
     while (this.interimCommittedChars < text.length) {
       const uncommitted = text.slice(this.interimCommittedChars).trim();
@@ -70,7 +87,7 @@ export class Segmenter extends EventEmitter<Events> {
         const cutIdx = m.index! + 1;
         const sentence = normalize(uncommitted.slice(0, cutIdx));
         if (sentence.length >= this.minChars) {
-          this.emit('final', sentence, this.seq++);
+          this.emitFinal(sentence);
           this.interimCommittedChars += uncommitted.slice(0, cutIdx + m[0].length - 1).length;
           cutFound = true;
           break;
@@ -83,7 +100,7 @@ export class Segmenter extends EventEmitter<Events> {
           const cutIdx = m.index! + 1;
           const clause = normalize(uncommitted.slice(0, cutIdx));
           if (clause.length >= 25) {
-            this.emit('final', clause, this.seq++);
+            this.emitFinal(clause);
             this.interimCommittedChars += uncommitted.slice(0, cutIdx + m[0].length - 1).length;
             cutFound = true;
             break;
@@ -97,7 +114,7 @@ export class Segmenter extends EventEmitter<Events> {
         const cutIdx = space > 0 ? space : this.maxChars;
         const chunk = normalize(uncommitted.slice(0, cutIdx));
         if (chunk.length >= this.minChars) {
-          this.emit('final', chunk, this.seq++);
+          this.emitFinal(chunk);
           this.interimCommittedChars += cutIdx;
           cutFound = true;
         }
@@ -120,19 +137,34 @@ export class Segmenter extends EventEmitter<Events> {
     let text = normalize(this.buffer);
     this.buffer = '';
 
-    // If buffer was empty but interim had trailing uncommitted words, finalize them
+    // If buffer was empty but interim had trailing uncommitted words, finalize
+    // them. This fires on a silence timeout, not a real segment boundary —
+    // Gemini's interim buffer for a transcribe model keeps growing from the
+    // same base afterwards (gaps over silenceMs between messages are common,
+    // not a sign the utterance ended). So mark the WHOLE current interim text
+    // as committed instead of resetting to 0: resetting made the next
+    // pushInterim() see the entire text as "new" again and re-emit it as a
+    // duplicate final — confirmed against a real recording, not hypothetical.
     if (!text && this.lastInterimText) {
       const uncommitted = this.lastInterimText.slice(this.interimCommittedChars).trim();
       if (uncommitted) text = normalize(uncommitted);
-      this.interimCommittedChars = 0;
-      this.lastInterimText = '';
+      this.interimCommittedChars = this.lastInterimText.length;
     }
 
-    if (text) this.emit('final', text, this.seq++);
+    if (text) this.emitFinal(text);
   }
 
   dispose() {
     clearTimeout(this.timer);
+  }
+
+  /** Drops an exact repeat of the immediately-previous final — Gemini's
+   * interim buffer restarting mid-sentence (see pushInterim) can otherwise
+   * re-commit the same sentence more than once. */
+  private emitFinal(text: string) {
+    if (text === this.lastFinalText) return;
+    this.lastFinalText = text;
+    this.emit('final', text, this.seq++);
   }
 
   private cutSentences() {
@@ -141,7 +173,7 @@ export class Segmenter extends EventEmitter<Events> {
       if (cut === -1) return;
       const text = normalize(this.buffer.slice(0, cut));
       this.buffer = this.buffer.slice(cut);
-      if (text) this.emit('final', text, this.seq++);
+      if (text) this.emitFinal(text);
     }
   }
 
